@@ -1,0 +1,29 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# LOCAL DEVELOPMENT
+# Starts only PostgreSQL. Backend and frontend run with their own dev servers:
+#   backend:  cd backend && npm run dev
+#   frontend: cd frontend && pnpm dev:portal / dev:admin / dev:gate
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       congregation_db
+      POSTGRES_USER:     postgres
+      POSTGRES_PASSWORD: devpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Auto-apply schema on first container start
+      - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d congregation_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

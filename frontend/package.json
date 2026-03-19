@@ -1,0 +1,16 @@
+{
+  "name": "congregation-frontend",
+  "private": true,
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "dev:portal": "turbo run dev --filter=@congregation/portal",
+    "dev:admin":  "turbo run dev --filter=@congregation/admin",
+    "dev:gate":   "turbo run dev --filter=@congregation/gate",
+    "build":      "turbo run build",
+    "lint":       "turbo run lint"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.5.3"
+  }
+}

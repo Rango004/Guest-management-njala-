@@ -1,0 +1,79 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# PRODUCTION STACK
+#
+# Before running:
+#   1. Copy .env.prod.example → .env.prod and fill in real secrets
+#   2. Build the frontend:
+#        cd frontend && pnpm install && pnpm build
+#   3. Start the stack:
+#        docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${DB_NAME}
+      POSTGRES_USER:     ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Not exposed externally — api connects over the internal Docker network
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV:                 production
+      PORT:                     3000
+      DATABASE_URL:             postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      DB_HOST:                  postgres
+      DB_PORT:                  5432
+      DB_NAME:                  ${DB_NAME}
+      DB_USER:                  ${DB_USER}
+      DB_PASSWORD:              ${DB_PASSWORD}
+      JWT_SECRET:               ${JWT_SECRET}
+      JWT_EXPIRES_IN:           ${JWT_EXPIRES_IN:-4h}
+      JWT_GRADUATE_EXPIRES_IN:  ${JWT_GRADUATE_EXPIRES_IN:-24h}
+      QR_HMAC_SECRET:           ${QR_HMAC_SECRET}
+      SMTP_HOST:                ${SMTP_HOST}
+      SMTP_PORT:                ${SMTP_PORT:-587}
+      SMTP_USER:                ${SMTP_USER}
+      SMTP_PASSWORD:            ${SMTP_PASSWORD}
+      EMAIL_FROM:               ${EMAIL_FROM}
+      APP_BASE_URL:             ${APP_BASE_URL}
+      PORTAL_URL:               ${PORTAL_URL}
+    # api is not exposed directly — nginx proxies /api and /socket.io to it
+    expose:
+      - "3000"
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro          # TLS certs (see nginx.conf)
+      - ./frontend/apps/portal/dist:/usr/share/nginx/html/portal:ro
+      - ./frontend/apps/admin/dist:/usr/share/nginx/html/admin:ro
+      - ./frontend/apps/gate/dist:/usr/share/nginx/html/gate:ro
+
+volumes:
+  pgdata:

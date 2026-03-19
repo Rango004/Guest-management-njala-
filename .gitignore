@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+.vite/
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Uploads
+uploads/
+
+# Android build artifacts (keep source, ignore build output)
+frontend/apps/gate/android/.gradle/
+frontend/apps/gate/android/app/build/
+frontend/apps/gate/android/build/
+frontend/apps/gate/android/local.properties
