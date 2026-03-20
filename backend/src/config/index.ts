@@ -12,16 +12,19 @@ export const config = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   isProduction: process.env.NODE_ENV === 'production',
 
-  db: {
+  ddb: {
     host:     process.env.DB_HOST     ?? 'localhost',
     port:     parseInt(process.env.DB_PORT ?? '5432', 10),
     database: process.env.DB_NAME     ?? 'congregation_db',
     user:     process.env.DB_USER     ?? 'postgres',
     password: process.env.DB_PASSWORD ?? '',
-    max:      20,    // connection pool size
+    max:      20,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 2_000,
-  },
+    // Neon and most cloud Postgres providers require SSL
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+},
+
 
   jwt: {
     secret:             required('JWT_SECRET'),
