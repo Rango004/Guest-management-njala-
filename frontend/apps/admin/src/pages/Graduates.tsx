@@ -84,7 +84,13 @@ export default function Graduates() {
         headers: { ...authHeader(), 'Content-Type': 'multipart/form-data' },
       });
       const s = data.data;
-      setImportMsg(`Import complete: ${s.imported} imported · ${s.duplicates} duplicates · ${s.failed} failed`);
+      let msg = `Import complete: ${s.imported} imported · ${s.duplicates} duplicates · ${s.failed} failed`;
+      if (s.errors?.length > 0) {
+        const reasons = s.errors.slice(0, 5).map((e: { row: number; reason: string }) => `Row ${e.row}: ${e.reason}`).join(' | ');
+        msg += ` — ${reasons}`;
+        if (s.errors.length > 5) msg += ` … and ${s.errors.length - 5} more`;
+      }
+      setImportMsg(msg);
       if (s.generatedPins?.length > 0) {
         setGeneratedPins(s.generatedPins);
         setShowPinsDialog(true);
@@ -197,7 +203,7 @@ export default function Graduates() {
       />
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>{error}</Alert>}
-      {importMsg && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setImportMsg('')}>{importMsg}</Alert>}
+      {importMsg && <Alert severity={importMsg.includes('failed') && !importMsg.startsWith('Import complete: 0 imported · 0 duplicates · 0 failed') ? 'warning' : 'success'} sx={{ mb: 2 }} onClose={() => setImportMsg('')}>{importMsg}</Alert>}
 
       {/* Search bar */}
       <GlassCard sx={{ p: 2, mb: 3 }}>
