@@ -131,6 +131,7 @@ export interface PassRow {
   pass_type: PassType;
   status: PassStatus;
   qr_code_hash: string;
+  qr_encrypted_payload: string | null;
   guest_name: string | null;
   gate_id: string;
   is_checked_in: boolean;

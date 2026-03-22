@@ -219,6 +219,10 @@ CREATE TABLE passes (
   -- Raw code exists only in the generated QR image and in the
   -- gate device's local validation cache. Never stored here.
   qr_code_hash    VARCHAR(64) NOT NULL UNIQUE,
+  -- The encrypted QR payload string (iv.ciphertext.tag, ~146 chars).
+  -- Stored so QR images can be regenerated on subsequent page loads.
+  -- NULL for legacy passes or PENDING_REVIEW vehicle passes (QR generated on approval).
+  qr_encrypted_payload TEXT,
   guest_name      VARCHAR(255),              -- optional; graduate may leave anonymous
   -- Single source of truth for which gate this pass is valid at.
   -- Inherited from graduate→faculty→gate at pass creation time.

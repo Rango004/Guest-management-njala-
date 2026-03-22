@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { query, withTransaction } from '../../db/pool';
 import { AppError } from '../../middleware/errorHandler';
-import { createPassQr } from '../../services/qr.service';
+import { createPassQr, generateQrDataUrl } from '../../services/qr.service';
 import { sendGuestPass, sendVehicleApproved, sendVehicleRejected } from '../../services/email.service';
 import { logAudit } from '../../services/audit.service';
 import type { PassRow, GraduateRow, FacultyRow, GateRow, EventRow } from '../../types';
@@ -43,12 +43,23 @@ export async function getMyPasses(req: Request, res: Response, next: NextFunctio
   try {
     const graduateId = req.graduate!.sub;
 
-    const result = await query<PassRow & { gate_code: string }>(
+    const result = await query<PassRow & { gate_code: string; qr_encrypted_payload: string | null }>(
       `SELECT p.*, gt.code AS gate_code
        FROM passes p JOIN gates gt ON gt.id = p.gate_id
        WHERE p.graduate_id = $1
        ORDER BY p.created_at DESC`,
       [graduateId]
+    );
+
+    // Regenerate QR data URLs from stored encrypted payloads
+    const passes = await Promise.all(
+      result.rows.map(async (p) => {
+        let qrDataUrl: string | null = null;
+        if (p.qr_encrypted_payload && p.status === 'APPROVED') {
+          qrDataUrl = await generateQrDataUrl(p.qr_encrypted_payload);
+        }
+        return { ...p, qrDataUrl, qr_encrypted_payload: undefined };
+      })
     );
 
     // Count remaining entitlements
@@ -59,7 +70,7 @@ export async function getMyPasses(req: Request, res: Response, next: NextFunctio
     res.json({
       ok: true,
       data: {
-        passes: result.rows,
+        passes,
         entitlements: {
           guestRemaining: (grad?.guest_limit_per_grad ?? 2) - guestIssued,
           vehicleRemaining: vehicleIssued === 0 ? 1 : 0,
@@ -99,18 +110,19 @@ export async function requestGuestPass(req: Request, res: Response, next: NextFu
     }
 
     // Generate QR
-    const { hash, dataUrl, buffer } = await createPassQr(
+    const { hash, encryptedPayload, dataUrl, buffer } = await createPassQr(
       'GUEST', grad.faculty_code, grad.gate_code, grad.event_id
     );
 
     const passRes = await query<PassRow>(
       `INSERT INTO passes
          (graduate_id, event_id, pass_type, status, qr_code_hash,
-          guest_name, gate_id, expires_at)
-       VALUES ($1,$2,'GUEST','APPROVED',$3,$4,$5,$6)
+          qr_encrypted_payload, guest_name, gate_id, expires_at)
+       VALUES ($1,$2,'GUEST','APPROVED',$3,$4,$5,$6,$7)
        RETURNING *`,
       [
         graduateId, grad.event_id, hash,
+        encryptedPayload,
         body.guest_name ?? null,
         grad.gate_id,
         grad.event_end_time,
@@ -179,7 +191,7 @@ export async function requestVehiclePass(req: Request, res: Response, next: Next
     if (!vehicleGate) throw new AppError(500, 'No vehicle gate configured for this event');
 
     // Use SELECT FOR UPDATE to prevent race condition on quota check + insert
-    const pass = await withTransaction(async (client) => {
+    const result = await withTransaction(async (client) => {
       // Lock the event row for duration of this transaction
       const eventRes = await client.query<EventRow>(
         `SELECT * FROM events WHERE id = $1 FOR UPDATE`,
@@ -206,40 +218,51 @@ export async function requestVehiclePass(req: Request, res: Response, next: Next
 
       // Generate QR (only if auto-approved; pending passes get QR when approved)
       let hash = '';
+      let qrDataUrl: string | null = null;
+      let encPayload: string | null = null;
       if (autoApprove) {
         const qr = await createPassQr('VEHICLE', grad.faculty_code, vehicleGate.code, grad.event_id);
         hash = qr.hash;
+        qrDataUrl = qr.dataUrl;
+        encPayload = qr.encryptedPayload;
       } else {
         // Placeholder hash for pending passes — replaced on approval
         const { createHash } = await import('crypto');
         hash = createHash('sha256').update(`pending-${graduateId}-${Date.now()}`).digest('hex');
       }
 
-      const res = await client.query<PassRow>(
+      const insertRes = await client.query<PassRow>(
         `INSERT INTO passes
            (graduate_id, event_id, pass_type, status, qr_code_hash,
-            gate_id, expires_at)
-         VALUES ($1,$2,'VEHICLE',$3,$4,$5,$6)
+            qr_encrypted_payload, gate_id, expires_at)
+         VALUES ($1,$2,'VEHICLE',$3,$4,$5,$6,$7)
          RETURNING *`,
         [
           graduateId, grad.event_id, status, hash,
-          vehicleGate.id, grad.event_end_time,
+          encPayload, vehicleGate.id, grad.event_end_time,
         ]
       );
-      return res.rows[0]!;
+      return { pass: insertRes.rows[0]!, qrDataUrl };
     });
 
     // Notify dashboard of pending vehicle request
     const io = getIo();
-    if (io && pass.status === 'PENDING_REVIEW') {
+    if (io && result.pass.status === 'PENDING_REVIEW') {
       io.to(`event:${grad.event_id}:admin`).emit('vehicle_request', {
-        passId: pass.id,
+        passId: result.pass.id,
         graduateName: grad.full_name,
         studentId: grad.student_id,
       });
     }
 
-    res.status(201).json({ ok: true, data: { pass } });
+    res.status(201).json({
+      ok: true,
+      data: {
+        pass: result.pass,
+        qrDataUrl: result.qrDataUrl,
+        gateCode: vehicleGate.code,
+      },
+    });
   } catch (err) { next(err); }
 }
 

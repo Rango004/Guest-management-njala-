@@ -184,7 +184,7 @@ export async function createPassQr(
   _facultyCode: string,
   _gateCode: string,
   _eventId: string
-): Promise<{ rawCode: string; hash: string; dataUrl: string; buffer: Buffer }> {
+): Promise<{ rawCode: string; hash: string; encryptedPayload: string; dataUrl: string; buffer: Buffer }> {
   const rawCode = generateRawCode();
   const hash = hashCode(rawCode);
   const signature = signCode(rawCode);
@@ -195,5 +195,5 @@ export async function createPassQr(
     generateQrBuffer(encryptedPayload),
   ]);
 
-  return { rawCode, hash, dataUrl, buffer };
+  return { rawCode, hash, encryptedPayload, dataUrl, buffer };
 }

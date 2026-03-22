@@ -182,7 +182,11 @@ export default function Dashboard() {
   async function fetchPasses() {
     try {
       const { data } = await axios.get(`${API}/api/portal/passes`, { headers: authHeader() });
-      setPasses(data.data.passes);
+      // Backend now returns qrDataUrl (regenerated from stored encrypted payload)
+      setPasses(data.data.passes.map((p: Pass & { qrDataUrl?: string }) => ({
+        ...p,
+        qrDataUrl: p.qrDataUrl ?? undefined,
+      })));
       setEntitlements(data.data.entitlements);
     } catch {
       /* handled below */
@@ -218,7 +222,8 @@ export default function Dashboard() {
     setRequesting(true);
     try {
       const { data } = await axios.post(`${API}/api/portal/passes/vehicle`, {}, { headers: authHeader() });
-      setPasses(p => [data.data.pass, ...p]);
+      const newPass: Pass = { ...data.data.pass, gate_code: data.data.gateCode, qrDataUrl: data.data.qrDataUrl };
+      setPasses(p => [newPass, ...p]);
       setEntitlements(e => ({ ...e, vehicleRemaining: 0 }));
     } catch (err: unknown) {
       setError(axios.isAxiosError(err) ? err.response?.data?.error ?? 'Failed' : 'Request failed');
