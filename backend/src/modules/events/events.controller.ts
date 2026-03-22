@@ -9,7 +9,7 @@ import type { EventRow, GateRow, FacultyRow, EventStatus } from '../../types';
 
 const createEventSchema = z.object({
   name:                   z.string().min(1).max(255),
-  event_date:             z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  event_date:             z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), // derived from event_start_time if omitted
   event_start_time:       z.string().datetime({ offset: true }),
   event_end_time:         z.string().datetime({ offset: true }),
   gate_open_time:         z.string().datetime({ offset: true }).optional(),
@@ -58,6 +58,10 @@ export async function createEvent(req: Request, res: Response, next: NextFunctio
     // event_date_matches_times check constraint regardless of client timezone.
     const derivedEventDate = new Date(body.event_start_time).toISOString().slice(0, 10);
 
+    // Default gate_open_time to 1 hour before event_start_time if not provided
+    const gateOpenTime = body.gate_open_time
+      ?? new Date(new Date(body.event_start_time).getTime() - 60 * 60 * 1000).toISOString();
+
     const result = await query<EventRow>(
       `INSERT INTO events
          (name, event_date, event_start_time, event_end_time, gate_open_time, venue,
@@ -66,7 +70,7 @@ export async function createEvent(req: Request, res: Response, next: NextFunctio
        RETURNING *`,
       [
         body.name, derivedEventDate, body.event_start_time, body.event_end_time,
-        body.gate_open_time ?? null, body.venue ?? null,
+        gateOpenTime, body.venue ?? null,
         body.parking_quota, body.guest_limit_per_grad, body.vehicle_auto_threshold,
       ]
     );

@@ -119,7 +119,20 @@ export default function Events() {
       setForm(BLANK_FORM);
       await load();
     } catch (err) {
-      setFormErr(axios.isAxiosError(err) ? err.response?.data?.error ?? 'Create failed' : 'Network error');
+      if (axios.isAxiosError(err)) {
+        const data = err.response?.data;
+        const details = data?.details;
+        if (Array.isArray(details) && details.length > 0) {
+          // Show Zod field-level errors: e.g. "event_start_time: Invalid datetime"
+          setFormErr(details.map((d: { path?: string[]; message?: string }) =>
+            `${(d.path ?? []).join('.')}: ${d.message ?? 'invalid'}`
+          ).join(' | '));
+        } else {
+          setFormErr(data?.error ?? 'Create failed');
+        }
+      } else {
+        setFormErr('Network error');
+      }
     } finally {
       setSaving(false);
     }
