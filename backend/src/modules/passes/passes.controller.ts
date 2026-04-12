@@ -114,13 +114,22 @@ export async function requestGuestPass(req: Request, res: Response, next: NextFu
       'GUEST', grad.faculty_code, grad.gate_code, grad.event_id
     );
 
+    // Debug: Check what event_end_time we're about to use
+    const eventCheckRes = await query<{ event_end_time: string }>(
+      `SELECT event_end_time::text FROM events WHERE id = $1`, [grad.event_id]
+    );
+    console.log('[Pass Creation] Event ID:', grad.event_id);
+    console.log('[Pass Creation] Event end time from DB:', eventCheckRes.rows[0]?.event_end_time);
+    console.log('[Pass Creation] grad.event_end_time:', grad.event_end_time);
+
     const passRes = await query<PassRow>(
       `INSERT INTO passes
          (graduate_id, event_id, pass_type, status, qr_code_hash,
           qr_encrypted_payload, guest_name, gate_id, expires_at)
-       VALUES ($1,$2,'GUEST','APPROVED',$3,$4,$5,$6,
-               (SELECT event_end_time FROM events WHERE id = $2))
-       RETURNING *`,
+       SELECT $1, $2, 'GUEST', 'APPROVED', $3, $4, $5, $6, e.event_end_time
+       FROM events e
+       WHERE e.id = $2
+       RETURNING passes.*`,
       [
         graduateId, grad.event_id, hash,
         encryptedPayload,
@@ -129,6 +138,7 @@ export async function requestGuestPass(req: Request, res: Response, next: NextFu
       ]
     );
     const pass = passRes.rows[0]!;
+    console.log('[Pass Creation] Created pass with expires_at:', pass.expires_at);
 
     res.status(201).json({
       ok: true,
@@ -235,9 +245,10 @@ export async function requestVehiclePass(req: Request, res: Response, next: Next
         `INSERT INTO passes
            (graduate_id, event_id, pass_type, status, qr_code_hash,
             qr_encrypted_payload, gate_id, expires_at)
-         VALUES ($1,$2,'VEHICLE',$3,$4,$5,$6,
-                 (SELECT event_end_time FROM events WHERE id = $2))
-         RETURNING *`,
+         SELECT $1, $2, 'VEHICLE', $3, $4, $5, $6, e.event_end_time
+         FROM events e
+         WHERE e.id = $2
+         RETURNING passes.*`,
         [
           graduateId, grad.event_id, status, hash,
           encPayload, vehicleGate.id,
