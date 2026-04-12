@@ -35,6 +35,60 @@ const SCAN_INTERVAL   = 120; // ~8 fps for web fallback
 
 function authHeader() { return { Authorization: `Bearer ${localStorage.getItem('gate_token')}` }; }
 
+// ── Audio feedback helper ──────────────────────────────────────────────────────
+
+const audioContext = typeof window !== 'undefined' ? new (window.AudioContext || (window as any).webkitAudioContext)() : null;
+
+function playSound(type: 'success' | 'error' | 'warning') {
+  if (!audioContext) return;
+  
+  const oscillator = audioContext.createOscillator();
+  const gainNode = audioContext.createGain();
+  
+  oscillator.connect(gainNode);
+  gainNode.connect(audioContext.destination);
+  
+  // Configure sound based on type
+  if (type === 'success') {
+    // Pleasant ascending beep
+    oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(1200, audioContext.currentTime + 0.1);
+    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + 0.15);
+  } else if (type === 'error') {
+    // Sharp descending beep (double)
+    oscillator.frequency.setValueAtTime(600, audioContext.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(300, audioContext.currentTime + 0.1);
+    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + 0.1);
+    
+    // Second beep
+    setTimeout(() => {
+      const osc2 = audioContext.createOscillator();
+      const gain2 = audioContext.createGain();
+      osc2.connect(gain2);
+      gain2.connect(audioContext.destination);
+      osc2.frequency.setValueAtTime(600, audioContext.currentTime);
+      osc2.frequency.exponentialRampToValueAtTime(300, audioContext.currentTime + 0.1);
+      gain2.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gain2.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+      osc2.start(audioContext.currentTime);
+      osc2.stop(audioContext.currentTime + 0.1);
+    }, 150);
+  } else if (type === 'warning') {
+    // Medium tone
+    oscillator.frequency.setValueAtTime(500, audioContext.currentTime);
+    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + 0.2);
+  }
+}
+
 // ── Crypto helpers for QR decryption + signature verification ────────────────
 
 /** Decode base64url (no padding) to Uint8Array backed by a plain ArrayBuffer */
@@ -220,6 +274,27 @@ export default function Scanner() {
     if (dismissTimerRef.current) { clearInterval(dismissTimerRef.current); dismissTimerRef.current = null; }
     setScanResult(state);
     setDismissProgress(100);
+    
+    // Haptic feedback and sound based on result type
+    if (IS_NATIVE) {
+      if (state.result === 'VALID') {
+        // Single vibration for valid pass
+        navigator.vibrate?.(200);
+        // Play success sound
+        playSound('success');
+      } else if (state.result === 'ALREADY_USED' || state.result === 'INVALID' || state.result === 'EXPIRED' || state.result === 'REVOKED') {
+        // Double vibration for rejected passes
+        navigator.vibrate?.([200, 100, 200]);
+        // Play error sound
+        playSound('error');
+      } else if (state.result === 'WRONG_GATE') {
+        // Single longer vibration for wrong gate
+        navigator.vibrate?.(400);
+        // Play warning sound
+        playSound('warning');
+      }
+    }
+    
     const start = Date.now();
     dismissTimerRef.current = setInterval(() => {
       const remaining = Math.max(0, 100 - ((Date.now() - start) / AUTO_DISMISS_MS) * 100);
@@ -717,9 +792,20 @@ export default function Scanner() {
             <motion.div
               key="result-overlay"
               initial={{ opacity: 0, scale: 0.97 }}
-              animate={{ opacity: 1, scale: 1 }}
+              animate={{ 
+                opacity: 1, 
+                scale: 1,
+                // Flash effect for invalid/error results
+                ...(scanResult.result !== 'VALID' && scanResult.result !== 'WRONG_GATE' ? {
+                  filter: ['brightness(1)', 'brightness(1.3)', 'brightness(1)', 'brightness(1.3)', 'brightness(1)']
+                } : {})
+              }}
               exit={{ opacity: 0, scale: 0.97 }}
-              transition={{ duration: 0.15, ease: 'easeOut' }}
+              transition={{ 
+                duration: 0.15, 
+                ease: 'easeOut',
+                filter: { duration: 0.6, times: [0, 0.15, 0.3, 0.45, 0.6] }
+              }}
               onClick={() => {
                 if (dismissTimerRef.current) { clearInterval(dismissTimerRef.current); dismissTimerRef.current = null; }
                 setScanResult(null);
