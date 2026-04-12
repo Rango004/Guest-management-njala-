@@ -1,4 +1,5 @@
 {
+  "buildCommand": "cd ../.. && pnpm install && cd apps/admin && pnpm build",
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]
