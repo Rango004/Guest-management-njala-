@@ -192,6 +192,7 @@ export default function Scanner() {
   const [online,    setOnline]    = useState(navigator.onLine);
   const [gateCode,  setGateCode]  = useState('?');
   const [eventName, setEventName] = useState('');
+  const [syncedAt,  setSyncedAt]  = useState<string | null>(null);
   const [lastSync,  setLastSync]  = useState<Date | null>(null);
   const [syncing,   setSyncing]   = useState(false);
 
@@ -232,7 +233,20 @@ export default function Scanner() {
   // ── Gate meta ──────────────────────────────────────────────────────────────
   useEffect(() => {
     db.meta.get('active').then(meta => {
-      if (meta) { setGateCode(meta.gateCode); setEventName(meta.eventName); }
+      if (meta) { 
+        setGateCode(meta.gateCode); 
+        setEventName(meta.eventName);
+        setSyncedAt(meta.syncedAt);
+        
+        // Log event metadata for debugging
+        console.log('[Scanner] Event metadata loaded:', {
+          eventName: meta.eventName,
+          eventId: meta.eventId,
+          gateOpenTime: meta.gateOpenTime,
+          eventEndTime: meta.eventEndTime,
+          syncedAt: meta.syncedAt
+        });
+      }
     });
   }, []);
 
@@ -330,7 +344,11 @@ export default function Scanner() {
     if (eventEndTime && !isNaN(eventEndTime.getTime()) && now > eventEndTime) {
       const endDateStr = eventEndTime.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
       const endTimeStr = eventEndTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
-      showResult({ result: 'EXPIRED', reason: `The event ended on ${endDateStr} at ${endTimeStr}. Please log out and sync again.` }); return;
+      showResult({ 
+        result: 'EXPIRED', 
+        reason: `Event ended ${endDateStr} at ${endTimeStr}. Log out and sync to load current event data.` 
+      }); 
+      return;
     }
 
     const pass = await lookupByHash(hash);
@@ -596,6 +614,11 @@ export default function Scanner() {
           <Typography variant="caption" sx={{ color: tokens.onSurfaceMedium }}>
             {eventName || 'Congregation Event'}
           </Typography>
+          {syncedAt && (
+            <Typography variant="caption" display="block" sx={{ color: tokens.onSurfaceDisabled, fontSize: '0.65rem' }}>
+              Data synced: {new Date(syncedAt).toLocaleDateString('en-GB')} {new Date(syncedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+            </Typography>
+          )}
         </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <Chip

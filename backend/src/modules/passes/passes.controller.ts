@@ -118,14 +118,14 @@ export async function requestGuestPass(req: Request, res: Response, next: NextFu
       `INSERT INTO passes
          (graduate_id, event_id, pass_type, status, qr_code_hash,
           qr_encrypted_payload, guest_name, gate_id, expires_at)
-       VALUES ($1,$2,'GUEST','APPROVED',$3,$4,$5,$6,$7)
+       VALUES ($1,$2,'GUEST','APPROVED',$3,$4,$5,$6,
+               (SELECT event_end_time FROM events WHERE id = $2))
        RETURNING *`,
       [
         graduateId, grad.event_id, hash,
         encryptedPayload,
         body.guest_name ?? null,
         grad.gate_id,
-        grad.event_end_time,
       ]
     );
     const pass = passRes.rows[0]!;
@@ -235,11 +235,12 @@ export async function requestVehiclePass(req: Request, res: Response, next: Next
         `INSERT INTO passes
            (graduate_id, event_id, pass_type, status, qr_code_hash,
             qr_encrypted_payload, gate_id, expires_at)
-         VALUES ($1,$2,'VEHICLE',$3,$4,$5,$6,$7)
+         VALUES ($1,$2,'VEHICLE',$3,$4,$5,$6,
+                 (SELECT event_end_time FROM events WHERE id = $2))
          RETURNING *`,
         [
           graduateId, grad.event_id, status, hash,
-          encPayload, vehicleGate.id, grad.event_end_time,
+          encPayload, vehicleGate.id,
         ]
       );
       return { pass: insertRes.rows[0]!, qrDataUrl };

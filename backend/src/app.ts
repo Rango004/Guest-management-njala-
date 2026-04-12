@@ -20,12 +20,32 @@ const app = express();
 app.set('trust proxy', 1);         // Required for correct IP behind reverse proxy
 
 // CORS — allow all localhost ports in dev, restrict to known origins in prod
-const allowedOrigins = process.env.NODE_ENV === 'production'
-  ? (process.env.CORS_ORIGINS ?? '').split(',').map(o => o.trim()).filter(Boolean)
-  : true; // allow all origins in development
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return true;
+  if (process.env.NODE_ENV !== 'production') return true;
+
+  const allowedOrigins = new Set(
+    (process.env.CORS_ORIGINS ?? '')
+      .split(',')
+      .map(o => o.trim())
+      .filter(Boolean)
+  );
+
+  return (
+    allowedOrigins.has(origin) ||
+    origin === 'http://localhost' ||
+    origin === 'https://localhost' ||
+    origin === 'capacitor://localhost' ||
+    origin === 'http://127.0.0.1' ||
+    origin === 'https://127.0.0.1'
+  );
+}
 
 app.use(cors({
-  origin: allowedOrigins,
+  origin: (origin, callback) => {
+    const allowed = isAllowedOrigin(origin);
+    callback(allowed ? null : new Error(`CORS blocked origin: ${origin}`), allowed);
+  },
   credentials: true,
 }));
 

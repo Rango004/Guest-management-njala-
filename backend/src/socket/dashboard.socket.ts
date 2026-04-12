@@ -6,14 +6,34 @@ import type { AdminJwtPayload } from '../types';
 
 let io: SocketServer | null = null;
 
-export function initSocket(httpServer: HttpServer): SocketServer {
-  const allowedOrigins = config.nodeEnv === 'production'
-    ? (process.env.CORS_ORIGINS ?? '').split(',').map(o => o.trim()).filter(Boolean)
-    : true;
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return true;
+  if (config.nodeEnv !== 'production') return true;
 
+  const allowedOrigins = new Set(
+    (process.env.CORS_ORIGINS ?? '')
+      .split(',')
+      .map(o => o.trim())
+      .filter(Boolean)
+  );
+
+  return (
+    allowedOrigins.has(origin) ||
+    origin === 'http://localhost' ||
+    origin === 'https://localhost' ||
+    origin === 'capacitor://localhost' ||
+    origin === 'http://127.0.0.1' ||
+    origin === 'https://127.0.0.1'
+  );
+}
+
+export function initSocket(httpServer: HttpServer): SocketServer {
   io = new SocketServer(httpServer, {
     cors: {
-      origin: allowedOrigins,
+      origin: (origin, callback) => {
+        const allowed = isAllowedOrigin(origin);
+        callback(allowed ? null : new Error(`CORS blocked origin: ${origin}`), allowed);
+      },
       methods: ['GET', 'POST'],
       credentials: true,
     },
