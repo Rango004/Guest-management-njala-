@@ -46,6 +46,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.FLASHLIGHT" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- Camera is required for QR scanning at gates -->
     <uses-feature android:name="android.hardware.camera" android:required="true" />

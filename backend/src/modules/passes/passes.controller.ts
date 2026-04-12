@@ -126,10 +126,9 @@ export async function requestGuestPass(req: Request, res: Response, next: NextFu
       `INSERT INTO passes
          (graduate_id, event_id, pass_type, status, qr_code_hash,
           qr_encrypted_payload, guest_name, gate_id, expires_at)
-       SELECT $1, $2, 'GUEST', 'APPROVED', $3, $4, $5, $6, e.event_end_time
-       FROM events e
-       WHERE e.id = $2
-       RETURNING passes.*`,
+       VALUES ($1, $2, 'GUEST', 'APPROVED', $3, $4, $5, $6,
+               (SELECT event_end_time FROM events WHERE id = $2 LIMIT 1))
+       RETURNING *`,
       [
         graduateId, grad.event_id, hash,
         encryptedPayload,
@@ -245,10 +244,9 @@ export async function requestVehiclePass(req: Request, res: Response, next: Next
         `INSERT INTO passes
            (graduate_id, event_id, pass_type, status, qr_code_hash,
             qr_encrypted_payload, gate_id, expires_at)
-         SELECT $1, $2, 'VEHICLE', $3, $4, $5, $6, e.event_end_time
-         FROM events e
-         WHERE e.id = $2
-         RETURNING passes.*`,
+         VALUES ($1, $2, 'VEHICLE', $3, $4, $5, $6,
+                 (SELECT event_end_time FROM events WHERE id = $2 LIMIT 1))
+         RETURNING *`,
         [
           graduateId, grad.event_id, status, hash,
           encPayload, vehicleGate.id,

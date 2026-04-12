@@ -275,24 +275,54 @@ export default function Scanner() {
     setScanResult(state);
     setDismissProgress(100);
     
+    console.log('[Scanner] Showing result:', state.result);
+    
     // Haptic feedback and sound based on result type
-    if (IS_NATIVE) {
-      if (state.result === 'VALID') {
-        // Single vibration for valid pass
-        navigator.vibrate?.(200);
-        // Play success sound
-        playSound('success');
-      } else if (state.result === 'ALREADY_USED' || state.result === 'INVALID' || state.result === 'EXPIRED' || state.result === 'REVOKED') {
-        // Double vibration for rejected passes
-        navigator.vibrate?.([200, 100, 200]);
-        // Play error sound
-        playSound('error');
-      } else if (state.result === 'WRONG_GATE') {
-        // Single longer vibration for wrong gate
-        navigator.vibrate?.(400);
-        // Play warning sound
-        playSound('warning');
+    if (state.result === 'VALID') {
+      console.log('[Scanner] Playing VALID feedback');
+      // Single vibration for valid pass
+      try {
+        if ('vibrate' in navigator) {
+          navigator.vibrate(200);
+          console.log('[Scanner] Vibration triggered');
+        } else {
+          console.log('[Scanner] Vibration API not available');
+        }
+      } catch (e) {
+        console.error('[Scanner] Vibration error:', e);
       }
+      // Play success sound
+      playSound('success');
+    } else if (state.result === 'ALREADY_USED' || state.result === 'INVALID' || state.result === 'EXPIRED' || state.result === 'REVOKED') {
+      console.log('[Scanner] Playing ERROR feedback');
+      // Double vibration for rejected passes
+      try {
+        if ('vibrate' in navigator) {
+          navigator.vibrate([200, 100, 200]);
+          console.log('[Scanner] Double vibration triggered');
+        } else {
+          console.log('[Scanner] Vibration API not available');
+        }
+      } catch (e) {
+        console.error('[Scanner] Vibration error:', e);
+      }
+      // Play error sound
+      playSound('error');
+    } else if (state.result === 'WRONG_GATE') {
+      console.log('[Scanner] Playing WARNING feedback');
+      // Single longer vibration for wrong gate
+      try {
+        if ('vibrate' in navigator) {
+          navigator.vibrate(400);
+          console.log('[Scanner] Long vibration triggered');
+        } else {
+          console.log('[Scanner] Vibration API not available');
+        }
+      } catch (e) {
+        console.error('[Scanner] Vibration error:', e);
+      }
+      // Play warning sound
+      playSound('warning');
     }
     
     const start = Date.now();
@@ -704,8 +734,20 @@ export default function Scanner() {
               background: online ? tokens.successBg : tokens.warningBg,
               color:      online ? tokens.success   : tokens.warning }}
           />
-          <Tooltip title="Sync now">
-            <IconButton size="small" onClick={liveSync} disabled={syncing || !online} sx={{ color: tokens.onSurfaceMedium }}>
+          <Tooltip title="Force sync - clears old data and downloads fresh passes">
+            <IconButton 
+              size="small" 
+              onClick={async () => {
+                if (!online) return;
+                // Clear IndexedDB and force re-login
+                await db.passes.clear();
+                await db.meta.clear();
+                localStorage.removeItem('gate_token');
+                navigate('/');
+              }} 
+              disabled={syncing || !online} 
+              sx={{ color: tokens.warning }}
+            >
               <SyncOutlined fontSize="small" />
             </IconButton>
           </Tooltip>
