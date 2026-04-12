@@ -7,6 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      injectRegister: 'auto',
       workbox: {
         // Cache all app shell assets
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
@@ -29,5 +30,5 @@ export default defineConfig({
     }),
   ],
   server: { port: 5175 },
-  build:  { outDir: 'dist' },
+  build:  { outDir: 'dist', cssCodeSplit: false },
 });

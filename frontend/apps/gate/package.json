@@ -5,7 +5,13 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "android:sync": "cap sync android",
-    "android:open": "cap open android"
+    "android:open": "cap open android",
+    "android:build": "npm run build && npm run android:sync && node scripts/bump-version.js",
+    "android:build-apk": "npm run android:build && cd android && gradlew.bat assembleDebug && cd ..",
+    "android:build-release": "npm run android:build && cd android && gradlew.bat assembleRelease && cd ..",
+    "version:bump": "node scripts/bump-version.js",
+    "version:bump-minor": "node scripts/bump-version.js minor",
+    "version:bump-major": "node scripts/bump-version.js major"
   },
   "dependencies": {
     "@capacitor-mlkit/barcode-scanning": "^6.2.0",

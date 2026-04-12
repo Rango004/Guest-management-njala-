@@ -15,7 +15,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Box, Typography, Chip, IconButton, Tooltip, LinearProgress, Alert,
+  Box, Typography, Chip, IconButton, Tooltip, LinearProgress, Alert, Button,
 } from '@mui/material';
 import {
   WifiOutlined, WifiOffOutlined, SyncOutlined, LogoutOutlined, FlipCameraAndroidOutlined,
@@ -23,15 +23,14 @@ import {
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Capacitor } from '@capacitor/core';
-import axios from 'axios';
 import { tokens } from '@congregation/ui';
 import { db, lookupByHash, markCheckedIn, getUnsyncedLogs, markLogsAsSynced } from '../db/gate.db';
+import { requestApiJson } from '../config/api';
 
 const IS_NATIVE      = Capacitor.isNativePlatform();
-const API             = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 const DEVICE_ID       = localStorage.getItem('gate_device_id') ?? 'unknown';
 const SYNC_MS         = 30_000;
-const AUTO_DISMISS_MS = 4_000;
+const AUTO_DISMISS_MS = 2_500;
 const SCAN_INTERVAL   = 120; // ~8 fps for web fallback
 
 function authHeader() { return { Authorization: `Bearer ${localStorage.getItem('gate_token')}` }; }
@@ -202,10 +201,18 @@ export default function Scanner() {
   const dismissTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const processingRef   = useRef(false);
 
+  const launchNativeScannerRef = useRef<(() => Promise<void>) | null>(null);
+
   const dismissResult = useCallback(() => {
     if (dismissTimerRef.current) { clearInterval(dismissTimerRef.current); dismissTimerRef.current = null; }
     setScanResult(null);
-    setTimeout(() => { processingRef.current = false; }, 1000);
+    setTimeout(() => {
+      processingRef.current = false;
+      if (IS_NATIVE && launchNativeScannerRef.current) {
+        // Relaunch scanner after result is dismissed
+        void launchNativeScannerRef.current();
+      }
+    }, 500);
   }, []);
 
   const showResult = useCallback((state: ResultState) => {
@@ -244,17 +251,19 @@ export default function Scanner() {
     try {
       const logs = await getUnsyncedLogs();
       if (logs.length === 0 && lastSync) return;
-      await axios.post(`${API}/api/sync/checkins`, {
-        lastSyncAt: lastSync?.toISOString(),
-        checkins: logs.map(l => ({ passId: l.passId, deviceId: DEVICE_ID, gateId: l.gateId, scannedAt: l.scannedAt, result: l.result, rawCodePrefix: l.rawCodePrefix })),
-      }, { headers: authHeader() }).then(async ({ data }) => {
-        const ids = logs.map(l => l.id!).filter(Boolean);
-        if (ids.length) await markLogsAsSynced(ids);
-        for (const d of data.data.delta ?? []) {
-          if (d.pass_id && d.result === 'VALID') await markCheckedIn(d.pass_id);
-        }
-        setLastSync(new Date());
+      const data = await requestApiJson<{ data: { delta?: Array<{ pass_id?: string; result?: string }> } }>('POST', '/api/sync/checkins', {
+        headers: authHeader(),
+        data: {
+          lastSyncAt: lastSync?.toISOString(),
+          checkins: logs.map(l => ({ passId: l.passId, deviceId: DEVICE_ID, gateId: l.gateId, scannedAt: l.scannedAt, result: l.result, rawCodePrefix: l.rawCodePrefix })),
+        },
       });
+      const ids = logs.map(l => l.id!).filter(Boolean);
+      if (ids.length) await markLogsAsSynced(ids);
+      for (const d of data.data.delta ?? []) {
+        if (d.pass_id && d.result === 'VALID') await markCheckedIn(d.pass_id);
+      }
+      setLastSync(new Date());
     } catch { /* non-fatal */ }
     finally { setSyncing(false); }
   }, [lastSync]);
@@ -302,11 +311,26 @@ export default function Scanner() {
 
     const now = new Date();
 
-    if (meta?.gateOpenTime && now < new Date(meta.gateOpenTime)) {
+    // Parse event times - ensure they're valid ISO dates
+    // Backend should send ISO 8601 strings (e.g., "2026-04-12T22:00:00.000Z")
+    const gateOpenTime = meta?.gateOpenTime ? new Date(meta.gateOpenTime) : null;
+    const eventEndTime = meta?.eventEndTime ? new Date(meta.eventEndTime) : null;
+
+    // Debug logging for date issues
+    if (meta?.eventEndTime) {
+      console.log('[Scanner] Raw eventEndTime from DB:', meta.eventEndTime);
+      console.log('[Scanner] Parsed eventEndTime:', eventEndTime?.toISOString());
+      console.log('[Scanner] Current time:', now.toISOString());
+      console.log('[Scanner] Is event ended?', eventEndTime && !isNaN(eventEndTime.getTime()) ? now > eventEndTime : 'Invalid date');
+    }
+
+    if (gateOpenTime && !isNaN(gateOpenTime.getTime()) && now < gateOpenTime) {
       showResult({ result: 'INVALID', reason: 'Gates are not open yet' }); return;
     }
-    if (meta?.eventEndTime && now > new Date(meta.eventEndTime)) {
-      showResult({ result: 'EXPIRED', reason: 'The event has ended' }); return;
+    if (eventEndTime && !isNaN(eventEndTime.getTime()) && now > eventEndTime) {
+      const endDateStr = eventEndTime.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+      const endTimeStr = eventEndTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+      showResult({ result: 'EXPIRED', reason: `The event ended on ${endDateStr} at ${endTimeStr}. Please log out and sync again.` }); return;
     }
 
     const pass = await lookupByHash(hash);
@@ -319,9 +343,19 @@ export default function Scanner() {
       await db.scanLogs.add({ passId: pass.passId, deviceId: DEVICE_ID, gateId: meta?.gateId ?? '', scannedAt: now.toISOString(), result: 'REVOKED', rawCodePrefix: code.slice(0, 4), synced: false });
       showResult({ result: 'REVOKED', reason: 'This pass has been revoked' }); return;
     }
-    if (now > new Date(pass.expiresAt)) {
+    
+    // Parse pass expiration date
+    const passExpiresAt = new Date(pass.expiresAt);
+    console.log('[Scanner] Raw pass.expiresAt from DB:', pass.expiresAt);
+    console.log('[Scanner] Parsed passExpiresAt:', passExpiresAt.toISOString());
+    console.log('[Scanner] Current time:', now.toISOString());
+    console.log('[Scanner] Is pass expired?', !isNaN(passExpiresAt.getTime()) ? now > passExpiresAt : 'Invalid date');
+    
+    if (!isNaN(passExpiresAt.getTime()) && now > passExpiresAt) {
       await db.scanLogs.add({ passId: pass.passId, deviceId: DEVICE_ID, gateId: meta?.gateId ?? '', scannedAt: now.toISOString(), result: 'EXPIRED', rawCodePrefix: code.slice(0, 4), synced: false });
-      showResult({ result: 'EXPIRED', reason: 'Pass has expired', pass }); return;
+      const expDateStr = passExpiresAt.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+      const expTimeStr = passExpiresAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+      showResult({ result: 'EXPIRED', reason: `Pass expired on ${expDateStr} at ${expTimeStr}`, pass }); return;
     }
     if (pass.passType === 'VEHICLE' && meta?.gateType === 'PEDESTRIAN') {
       await db.scanLogs.add({ passId: pass.passId, deviceId: DEVICE_ID, gateId: meta.gateId, scannedAt: now.toISOString(), result: 'WRONG_GATE', rawCodePrefix: code.slice(0, 4), synced: false });
@@ -347,36 +381,8 @@ export default function Scanner() {
 
   // ═══════════════════════════════════════════════════════════════════════════
   // NATIVE SCANNING — ML Kit via @capacitor-mlkit/barcode-scanning
-  // The native camera renders BEHIND the transparent WebView.
+  // Uses Google's barcode scanner module for reliable camera preview
   // ═══════════════════════════════════════════════════════════════════════════
-
-  const startNativeScanner = useCallback(async () => {
-    try {
-      const { BarcodeScanner, BarcodeFormat } = await import('@capacitor-mlkit/barcode-scanning');
-
-      // Request camera permission
-      const { camera } = await BarcodeScanner.requestPermissions();
-      if (camera === 'denied') {
-        setCamError('Camera permission denied. Go to Settings → Apps → Congregation Gate → Permissions.');
-        return;
-      }
-
-      // Make WebView background transparent so native camera shows through
-      document.body.classList.add('native-scanner-active');
-
-      // Start continuous scanning
-      await BarcodeScanner.addListener('barcodeScanned', async (event) => {
-        const value = event.barcode.rawValue;
-        if (value) await handleScan(value);
-      });
-
-      await BarcodeScanner.startScan({ formats: [BarcodeFormat.QrCode] });
-      setScanning(true);
-    } catch (err) {
-      console.error('Native scanner error:', err);
-      setCamError('Could not start scanner. Please restart the app.');
-    }
-  }, [handleScan]);
 
   const stopNativeScanner = useCallback(async () => {
     try {
@@ -385,8 +391,72 @@ export default function Scanner() {
       await BarcodeScanner.removeAllListeners();
     } catch { /* already stopped */ }
     document.body.classList.remove('native-scanner-active');
+    document.querySelector('html')?.classList.remove('native-scanner-active');
     setScanning(false);
   }, []);
+
+  const launchNativeScanner = useCallback(async () => {
+    if (processingRef.current) return;
+    
+    setScanning(true);
+    setCamError(null);
+
+    try {
+      const { BarcodeScanner, BarcodeFormat } = await import('@capacitor-mlkit/barcode-scanning');
+
+      // Check if scanning is supported
+      const { supported } = await BarcodeScanner.isSupported();
+      if (!supported) {
+        setCamError('This device does not support barcode scanning.');
+        setScanning(false);
+        return;
+      }
+
+      // Check and request permissions
+      const { camera } = await BarcodeScanner.checkPermissions();
+      if (camera !== 'granted') {
+        const result = await BarcodeScanner.requestPermissions();
+        if (result.camera !== 'granted') {
+          setCamError('Camera permission denied. Go to Settings > Apps > Congregation Gate > Permissions.');
+          setScanning(false);
+          return;
+        }
+      }
+
+      // Check if Google Barcode Scanner Module is available
+      const { available } = await BarcodeScanner.isGoogleBarcodeScannerModuleAvailable();
+      if (!available) {
+        // Install the module
+        await BarcodeScanner.installGoogleBarcodeScannerModule();
+        setCamError('Installing scanner module. Please wait and try again in a few seconds.');
+        setScanning(false);
+        return;
+      }
+
+      // Use the scan() method which opens Google's native scanner with camera preview
+      const result = await BarcodeScanner.scan({ formats: [BarcodeFormat.QrCode] });
+      
+      const value = result.barcodes?.[0]?.rawValue;
+      if (value) {
+        await handleScan(value);
+      } else {
+        setCamError('No QR code detected. Tap Retry to scan again.');
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      if (!message.toLowerCase().includes('cancel')) {
+        console.error('Native scanner error:', err);
+        setCamError(`Scanner error: ${message}`);
+      }
+    } finally {
+      setScanning(false);
+    }
+  }, [handleScan]);
+
+  // Store the scanner function in a ref so dismissResult can call it
+  useEffect(() => {
+    launchNativeScannerRef.current = launchNativeScanner;
+  }, [launchNativeScanner]);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // WEB SCANNING — getUserMedia + jsQR (development fallback)
@@ -464,8 +534,8 @@ export default function Scanner() {
   // ── Lifecycle: start/stop scanner ──────────────────────────────────────────
   useEffect(() => {
     if (IS_NATIVE) {
-      startNativeScanner();
-      return () => { stopNativeScanner(); };
+      void launchNativeScanner();
+      return () => { void stopNativeScanner(); };
     } else {
       startWebScanner();
       return () => { stopWebStream(); };
@@ -486,7 +556,7 @@ export default function Scanner() {
       position: 'relative', width: '100%', height: '100dvh',
       // On native: transparent so ML Kit camera shows through
       // On web: black background behind the video element
-      background: IS_NATIVE ? 'transparent' : '#000',
+      background: '#000',
       overflow: 'hidden',
     }}>
 
@@ -552,7 +622,19 @@ export default function Scanner() {
       {/* ── Camera error ──────────────────────────────────────────────────── */}
       {camError && (
         <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 15, width: '85%', maxWidth: 400 }}>
-          <Alert severity="error" onClose={() => setCamError(null)}>{camError}</Alert>
+          <Alert
+            severity="error"
+            onClose={() => setCamError(null)}
+            action={
+              IS_NATIVE ? (
+                <Button color="inherit" size="small" onClick={() => void launchNativeScanner()}>
+                  Retry
+                </Button>
+              ) : undefined
+            }
+          >
+            {camError}
+          </Alert>
         </Box>
       )}
 
@@ -671,7 +753,7 @@ export default function Scanner() {
               </motion.div>
 
               <Typography variant="caption" sx={{ position: 'absolute', bottom: 60, color: 'rgba(255,255,255,0.4)' }}>
-                Tap for details · auto-continues in 4 s
+                Tap for details · auto-continues in 2.5 s
               </Typography>
 
               <Box sx={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}>

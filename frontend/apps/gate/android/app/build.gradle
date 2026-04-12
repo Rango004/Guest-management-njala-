@@ -1,14 +1,25 @@
 apply plugin: 'com.android.application'
 
+// ── Auto-versioning from version.json ────────────────────────────────────────
+import groovy.json.JsonSlurper
+
+def versionFile = file("${rootProject.projectDir}/../version.json")
+def versionJson = new JsonSlurper().parseText(versionFile.text)
+def appVersionCode = versionJson.versionCode
+def appVersionName = "${versionJson.major}.${versionJson.minor}.${versionJson.patch}"
+
 android {
     namespace "edu.university.congregation.gate"
     compileSdk rootProject.ext.compileSdkVersion
+    buildFeatures {
+        dataBinding true
+    }
     defaultConfig {
         applicationId "edu.university.congregation.gate"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode appVersionCode
+        versionName appVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

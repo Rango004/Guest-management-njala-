@@ -11,25 +11,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet" />
-    <style>
-      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-      html, body, #root {
-        height: 100%; height: 100dvh;
-        overflow: hidden;
-        background: #0d0221;
-        font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
-      }
-      /* Keep status bar area clear on notched devices */
-      body { padding-top: env(safe-area-inset-top); }
-
-      /* Native ML Kit scanner: WebView must be transparent so the
-         native camera preview (rendered behind the WebView) is visible.
-         This class is toggled by Scanner.tsx when scanning starts/stops. */
-      body.native-scanner-active,
-      body.native-scanner-active #root {
-        background: transparent !important;
-      }
-    </style>
   </head>
   <body>
     <div id="root"></div>

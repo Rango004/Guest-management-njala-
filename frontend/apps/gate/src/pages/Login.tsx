@@ -7,10 +7,9 @@ import {
 import { QrCodeScannerOutlined, Visibility, VisibilityOff } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 import { GlassCard, tokens } from '@congregation/ui';
-import axios from 'axios';
 import { db } from '../db/gate.db';
-
-const API = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
+import { requestApiJson } from '../config/api';
+import { HttpClientError } from '../lib/httpClient';
 // A stable, per-device identifier (persisted across sessions)
 function getDeviceId(): string {
   let id = localStorage.getItem('gate_device_id');
@@ -20,18 +19,19 @@ function getDeviceId(): string {
 
 // Humanise server error messages for gate officers
 function friendlyError(err: unknown): { msg: string; retryable: boolean } {
-  if (err instanceof Error && !axios.isAxiosError(err)) {
-    return { msg: err.message, retryable: false };
-  }
-  if (axios.isAxiosError(err)) {
-    const status = err.response?.status;
-    const serverMsg: string = err.response?.data?.error ?? '';
+  if (err instanceof HttpClientError) {
+    const status = err.status;
+    const serverMsg = (err.data as { error?: string } | undefined)?.error ?? '';
     if (status === 401) return { msg: 'Incorrect username or password.', retryable: false };
     if (status === 403) return { msg: 'This account is not assigned to a gate. Contact your administrator.', retryable: false };
     if (status === 409) return { msg: serverMsg || 'The event is not ready for scanning yet. Ask your administrator to advance the event status, then tap "Retry Sync".', retryable: true };
     if (status === 404) return { msg: 'Gate or event not found. Contact your administrator.', retryable: false };
     if (status && status >= 500) return { msg: 'Server error. Please try again in a moment.', retryable: true };
     if (serverMsg) return { msg: serverMsg, retryable: false };
+    if (!status) return { msg: `Network error (${err.message}). Check connection, DNS, TLS certificate, or backend URL.`, retryable: true };
+  }
+  if (err instanceof Error) {
+    return { msg: err.message, retryable: false };
   }
   return { msg: 'Network error — check your connection and try again.', retryable: true };
 }
@@ -54,7 +54,7 @@ export default function Login() {
     setSyncing(true);
     setSyncError('');
     try {
-      const { data: sync } = await axios.get(`${API}/api/sync/dataset`, {
+      const sync = await requestApiJson<{ data: any }>('GET', '/api/sync/dataset', {
         headers: { Authorization: `Bearer ${token}` },
       });
       const dataset = sync.data;
@@ -96,7 +96,7 @@ export default function Login() {
       setSyncError(msg);
       setSyncRetryable(retryable);
       // On auth errors, clear everything so officer re-enters credentials
-      if (axios.isAxiosError(err) && err.response?.status === 401) {
+      if (err instanceof HttpClientError && err.status === 401) {
         localStorage.removeItem('gate_token');
         setPendingToken('');
         setPendingGateId('');
@@ -112,7 +112,9 @@ export default function Login() {
     setSyncError('');
     setLoading(true);
     try {
-      const { data } = await axios.post(`${API}/api/auth/admin/login`, { username, password });
+      const data = await requestApiJson<{ data: any }>('POST', '/api/auth/admin/login', {
+        data: { username, password },
+      });
       if (data.data.role !== 'GATE_OFFICER') {
         setLoginError('This app is for gate officers only. Use the Admin panel instead.');
         return;

@@ -3,3 +3,8 @@ include ':capacitor-cordova-android-plugins'
 project(':capacitor-cordova-android-plugins').projectDir = new File('./capacitor-cordova-android-plugins/')
 
 apply from: 'capacitor.settings.gradle'
+
+// Redirect all build directories outside OneDrive to avoid file-locking issues
+gradle.lifecycle.beforeProject { proj ->
+    proj.layout.buildDirectory.set(new File("C:/tmp/gradle-build/${rootProject.name}/${proj.name}"))
+}
