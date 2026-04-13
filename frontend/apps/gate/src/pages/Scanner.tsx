@@ -291,23 +291,7 @@ export default function Scanner() {
       } catch (e) {
         console.error('[Scanner] Vibration error:', e);
       }
-      // Play success sound
       playSound('success');
-    } else if (state.result === 'ALREADY_USED' || state.result === 'INVALID' || state.result === 'EXPIRED' || state.result === 'REVOKED') {
-      console.log('[Scanner] Playing ERROR feedback');
-      // Double vibration for rejected passes
-      try {
-        if ('vibrate' in navigator) {
-          navigator.vibrate([200, 100, 200]);
-          console.log('[Scanner] Double vibration triggered');
-        } else {
-          console.log('[Scanner] Vibration API not available');
-        }
-      } catch (e) {
-        console.error('[Scanner] Vibration error:', e);
-      }
-      // Play error sound
-      playSound('error');
     } else if (state.result === 'WRONG_GATE') {
       console.log('[Scanner] Playing WARNING feedback');
       // Single longer vibration for wrong gate
@@ -321,8 +305,22 @@ export default function Scanner() {
       } catch (e) {
         console.error('[Scanner] Vibration error:', e);
       }
-      // Play warning sound
       playSound('warning');
+    } else {
+      // All error states: INVALID, ALREADY_USED, EXPIRED, REVOKED
+      console.log('[Scanner] Playing ERROR feedback for:', state.result);
+      // Double vibration for rejected passes
+      try {
+        if ('vibrate' in navigator) {
+          navigator.vibrate([200, 100, 200]);
+          console.log('[Scanner] Double vibration triggered');
+        } else {
+          console.log('[Scanner] Vibration API not available');
+        }
+      } catch (e) {
+        console.error('[Scanner] Vibration error:', e);
+      }
+      playSound('error');
     }
     
     const start = Date.now();
@@ -443,24 +441,30 @@ export default function Scanner() {
       console.log('[Scanner] Is event ended?', eventEndTime && !isNaN(eventEndTime.getTime()) ? now > eventEndTime : 'Invalid date');
     }
 
+    // Check gate open time first (applies to all scans)
     if (gateOpenTime && !isNaN(gateOpenTime.getTime()) && now < gateOpenTime) {
       showResult({ result: 'INVALID', reason: 'Gates are not open yet' }); return;
     }
-    if (eventEndTime && !isNaN(eventEndTime.getTime()) && now > eventEndTime) {
-      const endDateStr = eventEndTime.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
-      const endTimeStr = eventEndTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
-      showResult({ 
-        result: 'EXPIRED', 
-        reason: `Event ended ${endDateStr} at ${endTimeStr}. Log out and sync to load current event data.` 
-      }); 
-      return;
-    }
 
+    // Lookup pass BEFORE checking event end time (so we can give specific error messages)
     const pass = await lookupByHash(hash);
 
     if (!pass) {
       await db.scanLogs.add({ passId: null, deviceId: DEVICE_ID, gateId: meta?.gateId ?? '', scannedAt: now.toISOString(), result: 'INVALID', rawCodePrefix: code.slice(0, 4), synced: false });
       showResult({ result: 'INVALID', reason: 'QR code not found in system' }); return;
+    }
+
+    // Now check event end time (only for valid passes)
+    if (eventEndTime && !isNaN(eventEndTime.getTime()) && now > eventEndTime) {
+      await db.scanLogs.add({ passId: pass.passId, deviceId: DEVICE_ID, gateId: meta?.gateId ?? '', scannedAt: now.toISOString(), result: 'EXPIRED', rawCodePrefix: code.slice(0, 4), synced: false });
+      const endDateStr = eventEndTime.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+      const endTimeStr = eventEndTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+      showResult({ 
+        result: 'EXPIRED', 
+        reason: `Event ended ${endDateStr} at ${endTimeStr}`,
+        pass
+      }); 
+      return;
     }
     if (pass.status === 'REVOKED') {
       await db.scanLogs.add({ passId: pass.passId, deviceId: DEVICE_ID, gateId: meta?.gateId ?? '', scannedAt: now.toISOString(), result: 'REVOKED', rawCodePrefix: code.slice(0, 4), synced: false });
