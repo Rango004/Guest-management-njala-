@@ -26,7 +26,7 @@ const validTransitions: Record<EventStatus, EventStatus[]> = {
   REGISTRATION_OPEN:   ['REGISTRATION_CLOSED'],
   REGISTRATION_CLOSED: ['LIVE', 'REGISTRATION_OPEN'],  // allow rollback before event day
   LIVE:                ['CLOSED'],
-  CLOSED:              ['ARCHIVED'],
+  CLOSED:              ['ARCHIVED', 'REGISTRATION_CLOSED', 'REGISTRATION_OPEN'],
   ARCHIVED:            [],
 };
 

@@ -26,8 +26,8 @@ export async function downloadDataset(req: Request, res: Response, next: NextFun
     );
     const event = eventRes.rows[0];
     if (!event) throw new AppError(404, 'Event not found');
-    if (event.status === 'DRAFT') {
-      throw new AppError(409, 'Event is still in DRAFT — configure gates and faculties before syncing.');
+    if (event.status === 'DRAFT' || event.status === 'REGISTRATION_OPEN') {
+      throw new AppError(409, 'Event is not ready for gate syncing yet. Please advance the event status to REGISTRATION_CLOSED or later.');
     }
     if (event.status === 'ARCHIVED') {
       throw new AppError(409, 'This event has been archived and is no longer active.');

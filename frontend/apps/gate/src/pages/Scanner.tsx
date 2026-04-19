@@ -385,6 +385,61 @@ export default function Scanner() {
     finally { setSyncing(false); }
   }, [lastSync]);
 
+  // ── Manual re-sync ──────────────────────────────────────────────────────
+  const manualResync = useCallback(async () => {
+    if (!online || syncing) return;
+    setSyncing(true);
+    try {
+      const sync = await requestApiJson<{ data: any }>('GET', '/api/sync/dataset', {
+        headers: authHeader(),
+      });
+      const dataset = sync.data;
+
+      const currentMeta = await db.meta.get('active');
+      await db.meta.put({
+        key: 'active',
+        eventId:         dataset.eventId,
+        eventName:       dataset.eventName,
+        gateCode:        dataset.gateCode,
+        gateType:        dataset.gateType,
+        gateId:          currentMeta?.gateId || '',
+        allowedFaculties: dataset.allowedFaculties,
+        gateOpenTime:    dataset.gateOpenTime,
+        eventEndTime:    dataset.eventEndTime,
+        syncedAt:        dataset.generatedAt,
+        signingPublicKey: dataset.signingPublicKey,
+        encryptionKey:    dataset.encryptionKey,
+      });
+
+      await db.passes.clear();
+      await db.passes.bulkPut(dataset.passes.map((p: any) => ({
+        passId:       p.passId,
+        qrCodeHash:   p.qrCodeHash,
+        passType:     p.passType,
+        status:       p.status,
+        gateCode:     p.gateCode,
+        gateType:     p.gateType,
+        facultyCode:  p.facultyCode,
+        guestName:    p.guestName,
+        graduateName: p.graduateName,
+        isCheckedIn:  p.isCheckedIn,
+        checkedInAt:  p.checkedInAt,
+        expiresAt:    p.expiresAt,
+      })));
+
+      setSyncedAt(dataset.generatedAt);
+      setLastSync(new Date());
+      // Update local state
+      setGateCode(dataset.gateCode);
+      setEventName(dataset.eventName);
+    } catch (err: unknown) {
+      console.error('Manual resync failed:', err);
+      // Maybe show an alert or something
+    } finally {
+      setSyncing(false);
+    }
+  }, [online, syncing]);
+
   useEffect(() => {
     liveSync();
     syncRef.current = setInterval(liveSync, SYNC_MS);
@@ -738,17 +793,10 @@ export default function Scanner() {
               background: online ? tokens.successBg : tokens.warningBg,
               color:      online ? tokens.success   : tokens.warning }}
           />
-          <Tooltip title="Force sync - clears old data and downloads fresh passes">
+          <Tooltip title="Re-sync pass data from server">
             <IconButton 
               size="small" 
-              onClick={async () => {
-                if (!online) return;
-                // Clear IndexedDB and force re-login
-                await db.passes.clear();
-                await db.meta.clear();
-                localStorage.removeItem('gate_token');
-                navigate('/');
-              }} 
+              onClick={() => void manualResync()} 
               disabled={syncing || !online} 
               sx={{ color: tokens.warning }}
             >

@@ -37,7 +37,11 @@ const NEXT_TRANSITION: Record<string, { status: string; label: string; color: 'p
     { status: 'REGISTRATION_OPEN', label: 'Reopen Registration', color: 'primary' },
   ],
   LIVE:     [{ status: 'CLOSED',   label: 'Close Event', color: 'error' }],
-  CLOSED:   [{ status: 'ARCHIVED', label: 'Archive',     color: 'inherit' }],
+  CLOSED:   [
+    { status: 'REGISTRATION_OPEN',   label: 'Extend Registration',        color: 'primary' },
+    { status: 'REGISTRATION_CLOSED', label: 'Reopen Review Window',       color: 'warning' },
+    { status: 'ARCHIVED',            label: 'Archive',                    color: 'inherit' },
+  ],
   ARCHIVED: [],
 };
 

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- This centers your logo and ensures it fits within the adaptive safe zone -->
+    <item
+        android:drawable="@drawable/logo"
+        android:gravity="center"
+        android:width="72dp"
+        android:height="72dp" />
+</layer-list>
