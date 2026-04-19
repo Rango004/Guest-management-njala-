@@ -2,8 +2,9 @@ import { Router } from 'express';
 import { requireSuperAdmin } from '../../middleware/auth';
 import {
   listEvents, getEvent, createEvent, updateEvent, changeEventStatus,
-  listGates, createGate, updateGate, deleteGate,
-  listFaculties, createFaculty, updateFaculty, deleteFaculty,
+  listGates, createGate, importGates, updateGate, deleteGate,
+  listFaculties, createFaculty, importFaculties, updateFaculty, deleteFaculty,
+  upload,
 } from './events.controller';
 
 const router = Router();
@@ -21,12 +22,14 @@ router.patch('/:id/status',  changeEventStatus);
 // Gates
 router.get('/:id/gates',                listGates);
 router.post('/:id/gates',               createGate);
+router.post('/:id/gates/import',        upload.single('file'), importGates);
 router.patch('/:id/gates/:gateId',      updateGate);
 router.delete('/:id/gates/:gateId',     deleteGate);
 
 // Faculties
 router.get('/:id/faculties',                        listFaculties);
 router.post('/:id/faculties',                       createFaculty);
+router.post('/:id/faculties/import',                upload.single('file'), importFaculties);
 router.patch('/:id/faculties/:facultyId',           updateFaculty);
 router.delete('/:id/faculties/:facultyId',          deleteFaculty);
 

@@ -8,6 +8,7 @@ import {
 } from '@mui/material';
 import {
   AddOutlined, DeleteOutlineOutlined, SaveOutlined, ArrowForwardOutlined, ContentCopyOutlined,
+  UploadFileOutlined, DownloadOutlined,
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 import { GlassCard, PageHeader, tokens } from '@congregation/ui';
@@ -27,6 +28,13 @@ interface EventData {
 }
 interface Gate { id: string; code: string; type: 'PEDESTRIAN' | 'VEHICLE' | 'GRADUATE'; label: string | null; }
 interface Faculty { id: string; name: string; code: string; gate_id: string; gate_code: string; gate_type: string; }
+interface BulkImportSummary {
+  totalRows: number;
+  created: number;
+  updated: number;
+  failed: number;
+  errors: Array<{ row: number; reason: string }>;
+}
 
 const GATE_TYPES = ['PEDESTRIAN', 'VEHICLE', 'GRADUATE'] as const;
 
@@ -89,11 +97,13 @@ export default function EventConfig() {
   const [addingGate, setAddingGate] = useState(false);
   const [gateForm, setGateForm]     = useState({ code: '', type: 'PEDESTRIAN' as typeof GATE_TYPES[number], label: '' });
   const [savingGate, setSavingGate] = useState(false);
+  const [uploadingGates, setUploadingGates] = useState(false);
 
   // Add Faculty dialog
   const [addingFaculty, setAddingFaculty]   = useState(false);
   const [facultyForm, setFacultyForm]       = useState({ name: '', code: '', gate_id: '' });
   const [savingFaculty, setSavingFaculty]   = useState(false);
+  const [uploadingFaculties, setUploadingFaculties] = useState(false);
 
   const loadAll = useCallback(async () => {
     if (!eventId) return;
@@ -167,6 +177,77 @@ export default function EventConfig() {
     }
   }
 
+  function downloadGateTemplate() {
+    const csv = [
+      'code,type,label',
+      'EAST,PEDESTRIAN,East Entrance',
+      'WEST,PEDESTRIAN,West Entrance',
+      'CAR1,VEHICLE,Main Vehicle Gate',
+    ].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'gates_template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function downloadSchoolTemplate() {
+    const csv = [
+      'code,name,gate_code',
+      'ENG,School of Engineering,EAST',
+      'SCI,School of Science,WEST',
+    ].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'schools_template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function summarizeImport(entity: string, summary: BulkImportSummary) {
+    let message = `${entity} import complete: ${summary.created} created, ${summary.updated} updated, ${summary.failed} failed.`;
+    if (summary.errors.length > 0) {
+      const preview = summary.errors
+        .slice(0, 3)
+        .map((item) => `Row ${item.row}: ${item.reason}`)
+        .join(' | ');
+      message += ` ${preview}`;
+      if (summary.errors.length > 3) message += ` | ${summary.errors.length - 3} more`;
+    }
+    return message;
+  }
+
+  async function handleGateImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingGates(true);
+    setError('');
+    setSuccess('');
+
+    const form = new FormData();
+    form.append('file', file);
+
+    try {
+      const { data } = await axios.post<{ data: BulkImportSummary }>(
+        `${API}/api/events/${eventId}/gates/import`,
+        form,
+        { headers: { ...authHeader(), 'Content-Type': 'multipart/form-data' } }
+      );
+      setSuccess(summarizeImport('Gate', data.data));
+      await loadAll();
+    } catch (err) {
+      setError(axios.isAxiosError(err) ? err.response?.data?.error ?? 'Gate import failed' : 'Network error');
+    } finally {
+      setUploadingGates(false);
+      e.target.value = '';
+    }
+  }
+
   async function deleteGate(gateId: string) {
     setError('');
     try {
@@ -194,6 +275,33 @@ export default function EventConfig() {
       setError(axios.isAxiosError(err) ? err.response?.data?.error ?? 'Add faculty failed' : 'Network error');
     } finally {
       setSavingFaculty(false);
+    }
+  }
+
+  async function handleFacultyImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingFaculties(true);
+    setError('');
+    setSuccess('');
+
+    const form = new FormData();
+    form.append('file', file);
+
+    try {
+      const { data } = await axios.post<{ data: BulkImportSummary }>(
+        `${API}/api/events/${eventId}/faculties/import`,
+        form,
+        { headers: { ...authHeader(), 'Content-Type': 'multipart/form-data' } }
+      );
+      setSuccess(summarizeImport('School', data.data));
+      await loadAll();
+    } catch (err) {
+      setError(axios.isAxiosError(err) ? err.response?.data?.error ?? 'School import failed' : 'Network error');
+    } finally {
+      setUploadingFaculties(false);
+      e.target.value = '';
     }
   }
 
@@ -421,7 +529,20 @@ export default function EventConfig() {
 
           {/* ── Gates tab ── */}
           <TabPanel value={tab} index={1}>
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mb: 2, flexWrap: 'wrap' }}>
+              <Button variant="outlined" size="small" startIcon={<DownloadOutlined />} onClick={downloadGateTemplate}>
+                Sample CSV
+              </Button>
+              <Button
+                component="label"
+                variant="outlined"
+                size="small"
+                startIcon={uploadingGates ? <CircularProgress size={16} color="inherit" /> : <UploadFileOutlined />}
+                disabled={uploadingGates}
+              >
+                Import CSV
+                <input type="file" accept=".csv,.txt" hidden onChange={handleGateImport} />
+              </Button>
               <Button variant="contained" size="small" startIcon={<AddOutlined />} onClick={() => setAddingGate(true)}>
                 Add Gate
               </Button>
@@ -471,18 +592,31 @@ export default function EventConfig() {
 
           {/* ── Faculties tab ── */}
           <TabPanel value={tab} index={2}>
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mb: 2, flexWrap: 'wrap' }}>
+              <Button variant="outlined" size="small" startIcon={<DownloadOutlined />} onClick={downloadSchoolTemplate}>
+                Sample School CSV
+              </Button>
+              <Button
+                component="label"
+                variant="outlined"
+                size="small"
+                startIcon={uploadingFaculties ? <CircularProgress size={16} color="inherit" /> : <UploadFileOutlined />}
+                disabled={uploadingFaculties}
+              >
+                Import Schools CSV
+                <input type="file" accept=".csv,.txt" hidden onChange={handleFacultyImport} />
+              </Button>
               <Button
                 variant="contained" size="small" startIcon={<AddOutlined />}
                 onClick={() => setAddingFaculty(true)}
                 disabled={gates.length === 0}
               >
-                Add Faculty
+                Add School
               </Button>
             </Box>
             {gates.length === 0 && (
               <Alert severity="info" sx={{ mb: 2 }}>
-                Create at least one gate before adding faculties
+                Create at least one gate before adding schools
               </Alert>
             )}
 

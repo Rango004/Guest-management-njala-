@@ -334,6 +334,10 @@ const resetPasswordSchema = z.object({
   new_password: z.string().min(8),
 });
 
+const updateUserAssignmentSchema = z.object({
+  assigned_gate_id: z.string().uuid(),
+});
+
 export async function resetUserPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { userId } = req.params;
@@ -358,6 +362,60 @@ export async function resetUserPassword(req: Request, res: Response, next: NextF
     });
 
     res.json({ ok: true, data: { message: 'Password reset successfully' } });
+  } catch (err) {
+    if (err instanceof z.ZodError) { next(new AppError(400, 'Validation error', err.issues)); return; }
+    next(err);
+  }
+}
+
+export async function updateUserAssignment(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { userId } = req.params;
+    const { assigned_gate_id } = updateUserAssignmentSchema.parse(req.body);
+
+    const [userRes, gateRes] = await Promise.all([
+      query<{ id: string; username: string; role: UserRow['role']; assigned_gate_id: string | null }>(
+        `SELECT id, username, role, assigned_gate_id FROM users WHERE id = $1`,
+        [userId]
+      ),
+      query<GateRow & { event_id: string }>(
+        `SELECT * FROM gates WHERE id = $1`,
+        [assigned_gate_id]
+      ),
+    ]);
+
+    const user = userRes.rows[0];
+    if (!user) throw new AppError(404, 'User not found');
+    if (user.role !== 'GATE_OFFICER') {
+      throw new AppError(409, 'Only gate officers can be assigned to gates');
+    }
+
+    const gate = gateRes.rows[0];
+    if (!gate) throw new AppError(404, 'Gate not found');
+
+    const result = await query<Omit<UserRow, 'password_hash'>>(
+      `UPDATE users
+       SET assigned_gate_id = $1
+       WHERE id = $2
+       RETURNING id, username, role, assigned_gate_id, is_active, created_at, last_login_at`,
+      [assigned_gate_id, userId]
+    );
+
+    await logAudit({
+      userId: req.admin!.sub,
+      eventId: gate.event_id,
+      action: 'GATE_ASSIGNMENT_CHANGE',
+      targetId: userId,
+      targetType: 'user',
+      details: {
+        username: user.username,
+        fromGateId: user.assigned_gate_id,
+        toGateId: assigned_gate_id,
+      },
+      ipAddress: req.ip,
+    });
+
+    res.json({ ok: true, data: result.rows[0] });
   } catch (err) {
     if (err instanceof z.ZodError) { next(new AppError(400, 'Validation error', err.issues)); return; }
     next(err);

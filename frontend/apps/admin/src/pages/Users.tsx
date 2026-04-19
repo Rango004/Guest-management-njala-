@@ -8,6 +8,7 @@ import {
 } from '@mui/material';
 import {
   AddOutlined, Visibility, VisibilityOff, PersonOutlined, LockResetOutlined,
+  SyncAltOutlined,
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GlassCard, PageHeader, tokens } from '@congregation/ui';
@@ -34,6 +35,7 @@ const ROLE_CONFIG = {
 
 const BLANK = { username: '', password: '', role: 'GATE_OFFICER' as 'SUPER_ADMIN' | 'GATE_OFFICER', assigned_gate_id: '' };
 const BLANK_RESET = { userId: '', username: '', newPassword: '' };
+const BLANK_ASSIGN = { userId: '', username: '', assigned_gate_id: '' };
 
 export default function Users() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -52,6 +54,9 @@ export default function Users() {
   const [resetShowPwd, setResetShowPwd]= useState(false);
   const [resetErr,     setResetErr]    = useState('');
   const [resetSuccess, setResetSuccess]= useState('');
+  const [assignTarget, setAssignTarget] = useState(BLANK_ASSIGN);
+  const [assignSaving, setAssignSaving] = useState(false);
+  const [assignErr, setAssignErr] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -112,6 +117,28 @@ export default function Users() {
       setResetErr(axios.isAxiosError(err) ? err.response?.data?.error ?? 'Reset failed' : 'Network error');
     } finally {
       setResetSaving(false);
+    }
+  }
+
+  async function handleAssignGate(e: React.FormEvent) {
+    e.preventDefault();
+    setAssignErr('');
+    if (!assignTarget.assigned_gate_id) {
+      setAssignErr('Please select a gate');
+      return;
+    }
+
+    setAssignSaving(true);
+    try {
+      await axios.patch(`${API}/api/admin/users/${assignTarget.userId}/assignment`, {
+        assigned_gate_id: assignTarget.assigned_gate_id,
+      }, { headers: authHeader() });
+      setAssignTarget(BLANK_ASSIGN);
+      await load();
+    } catch (err) {
+      setAssignErr(axios.isAxiosError(err) ? err.response?.data?.error ?? 'Gate assignment failed' : 'Network error');
+    } finally {
+      setAssignSaving(false);
     }
   }
 
@@ -220,6 +247,23 @@ export default function Users() {
                         {new Date(u.created_at).toLocaleDateString()}
                       </TableCell>
                       <TableCell align="right">
+                        {u.role === 'GATE_OFFICER' && (
+                          <Tooltip title="Assign or reassign gate">
+                            <IconButton
+                              size="small"
+                              onClick={() => {
+                                setAssignTarget({
+                                  userId: u.id,
+                                  username: u.username,
+                                  assigned_gate_id: u.assigned_gate_id ?? '',
+                                });
+                                setAssignErr('');
+                              }}
+                            >
+                              <SyncAltOutlined fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
                         <Tooltip title="Reset password">
                           <IconButton
                             size="small"
@@ -287,6 +331,51 @@ export default function Users() {
                 {resetSaving ? <CircularProgress size={18} color="inherit" /> : 'Reset Password'}
               </Button>
             )}
+          </DialogActions>
+        </Box>
+      </Dialog>
+
+      <Dialog
+        open={!!assignTarget.userId}
+        onClose={() => { setAssignTarget(BLANK_ASSIGN); setAssignErr(''); }}
+        maxWidth="xs" fullWidth
+        PaperProps={{ sx: { borderRadius: '16px' } }}
+      >
+        <Box component="form" onSubmit={handleAssignGate}>
+          <DialogTitle sx={{ fontWeight: 700 }}>
+            Assign Gate
+            {assignTarget.username && (
+              <Typography variant="body2" sx={{ color: tokens.onSurfaceMedium, fontWeight: 400 }}>
+                {assignTarget.username}
+              </Typography>
+            )}
+          </DialogTitle>
+          <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '12px !important' }}>
+            {assignErr && <Alert severity="error" onClose={() => setAssignErr('')}>{assignErr}</Alert>}
+            <FormControl fullWidth required>
+              <InputLabel>Assigned Gate</InputLabel>
+              <Select
+                value={assignTarget.assigned_gate_id}
+                label="Assigned Gate"
+                onChange={e => setAssignTarget((current) => ({ ...current, assigned_gate_id: e.target.value }))}
+              >
+                {gates.length === 0 ? (
+                  <MenuItem disabled>No gates configured for this event</MenuItem>
+                ) : (
+                  gates.map((g) => (
+                    <MenuItem key={g.id} value={g.id}>
+                      {g.code} - {g.label ?? g.type}
+                    </MenuItem>
+                  ))
+                )}
+              </Select>
+            </FormControl>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 3 }}>
+            <Button onClick={() => { setAssignTarget(BLANK_ASSIGN); setAssignErr(''); }}>Cancel</Button>
+            <Button type="submit" variant="contained" disabled={assignSaving || gates.length === 0}>
+              {assignSaving ? <CircularProgress size={18} color="inherit" /> : 'Save Assignment'}
+            </Button>
           </DialogActions>
         </Box>
       </Dialog>

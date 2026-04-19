@@ -1,9 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
+import multer from 'multer';
+import { parse } from 'csv-parse/sync';
 import { z } from 'zod';
 import { query, withTransaction } from '../../db/pool';
 import { AppError } from '../../middleware/errorHandler';
 import { logAudit } from '../../services/audit.service';
 import type { EventRow, GateRow, FacultyRow, EventStatus } from '../../types';
+
+export const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 // ── Validation schemas ────────────────────────────────────────────────────────
 
@@ -197,6 +201,64 @@ const gateSchema = z.object({
   label: z.string().max(100).optional(),
 });
 
+const gateImportSchema = z.object({
+  code: z.string().trim().min(1).max(10),
+  type: z.enum(['PEDESTRIAN', 'VEHICLE', 'GRADUATE']),
+  label: z.string().trim().max(100).optional(),
+});
+
+const facultyImportSchema = z.object({
+  code: z.string().trim().min(1).max(10),
+  name: z.string().trim().min(1).max(255),
+  gate_code: z.string().trim().min(1).max(10),
+});
+
+const REQUIRED_GATE_CSV_HEADERS = ['code', 'type'];
+const REQUIRED_FACULTY_CSV_HEADERS = ['code', 'name', 'gate_code'];
+
+interface BulkImportSummary {
+  totalRows: number;
+  created: number;
+  updated: number;
+  failed: number;
+  errors: Array<{ row: number; reason: string }>;
+}
+
+function normalizeOptionalText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed === '' ? undefined : trimmed;
+}
+
+async function ensureEventExists(eventId: string): Promise<void> {
+  const eventRes = await query<EventRow>(`SELECT id FROM events WHERE id = $1`, [eventId]);
+  if (!eventRes.rows[0]) throw new AppError(404, 'Event not found');
+}
+
+function parseCsvRows(req: Request): Array<Record<string, string>> {
+  if (!req.file) throw new AppError(400, 'No CSV file uploaded');
+
+  try {
+    return parse(req.file.buffer, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+    }) as Array<Record<string, string>>;
+  } catch {
+    throw new AppError(400, 'Invalid CSV format');
+  }
+}
+
+function validateCsvHeaders(rows: Array<Record<string, string>>, requiredHeaders: string[]): void {
+  if (rows.length === 0) throw new AppError(400, 'CSV file is empty');
+
+  const headers = Object.keys(rows[0] ?? {});
+  const missing = requiredHeaders.filter((header) => !headers.includes(header));
+  if (missing.length > 0) {
+    throw new AppError(400, `CSV missing required columns: ${missing.join(', ')}`);
+  }
+}
+
 export async function listGates(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const result = await query<GateRow>(
@@ -220,6 +282,98 @@ export async function createGate(req: Request, res: Response, next: NextFunction
     res.status(201).json({ ok: true, data: result.rows[0] });
   } catch (err) {
     if (err instanceof z.ZodError) { next(new AppError(400, 'Validation error', err.issues)); return; }
+    next(err);
+  }
+}
+
+export async function importGates(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id: eventId } = req.params;
+    await ensureEventExists(eventId);
+
+    const rows = parseCsvRows(req);
+    validateCsvHeaders(rows, REQUIRED_GATE_CSV_HEADERS);
+
+    const existingRes = await query<GateRow>(
+      `SELECT * FROM gates WHERE event_id = $1`,
+      [eventId]
+    );
+    const existingByCode = new Map(existingRes.rows.map((gate) => [gate.code.toUpperCase(), gate]));
+    const seenCodes = new Set<string>();
+    const summary: BulkImportSummary = {
+      totalRows: rows.length,
+      created: 0,
+      updated: 0,
+      failed: 0,
+      errors: [],
+    };
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]!;
+      const rowNum = i + 2;
+      const parsed = gateImportSchema.safeParse({
+        code: row.code,
+        type: row.type?.trim().toUpperCase(),
+        label: normalizeOptionalText(row.label),
+      });
+
+      if (!parsed.success) {
+        summary.failed++;
+        summary.errors.push({ row: rowNum, reason: parsed.error.issues[0]?.message ?? 'Invalid row' });
+        continue;
+      }
+
+      const code = parsed.data.code.toUpperCase();
+      if (seenCodes.has(code)) {
+        summary.failed++;
+        summary.errors.push({ row: rowNum, reason: `Duplicate gate code in CSV: ${code}` });
+        continue;
+      }
+      seenCodes.add(code);
+
+      const existing = existingByCode.get(code);
+      if (existing) {
+        const updatedRes = await query<GateRow>(
+          `UPDATE gates
+           SET type = $1::gate_type,
+               label = $2
+           WHERE id = $3
+           RETURNING *`,
+          [parsed.data.type, parsed.data.label ?? null, existing.id]
+        );
+        existingByCode.set(code, updatedRes.rows[0]!);
+        summary.updated++;
+        continue;
+      }
+
+      const createdRes = await query<GateRow>(
+        `INSERT INTO gates (event_id, code, type, label)
+         VALUES ($1, $2, $3, $4)
+         RETURNING *`,
+        [eventId, code, parsed.data.type, parsed.data.label ?? null]
+      );
+      existingByCode.set(code, createdRes.rows[0]!);
+      summary.created++;
+    }
+
+    await logAudit({
+      userId: req.admin!.sub,
+      eventId,
+      action: 'GATE_ASSIGNMENT_CHANGE',
+      targetId: eventId,
+      targetType: 'event',
+      details: {
+        entity: 'gate_import',
+        totalRows: summary.totalRows,
+        created: summary.created,
+        updated: summary.updated,
+        failed: summary.failed,
+      },
+      ipAddress: req.ip,
+    });
+
+    res.status(201).json({ ok: true, data: summary });
+  } catch (err) {
     next(err);
   }
 }
@@ -299,6 +453,118 @@ export async function createFaculty(req: Request, res: Response, next: NextFunct
     res.status(201).json({ ok: true, data: result.rows[0] });
   } catch (err) {
     if (err instanceof z.ZodError) { next(new AppError(400, 'Validation error', err.issues)); return; }
+    next(err);
+  }
+}
+
+export async function importFaculties(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { id: eventId } = req.params;
+    await ensureEventExists(eventId);
+
+    const rows = parseCsvRows(req);
+    validateCsvHeaders(rows, REQUIRED_FACULTY_CSV_HEADERS);
+
+    const [existingFacultiesRes, gateRes] = await Promise.all([
+      query<FacultyRow>(
+        `SELECT * FROM faculties WHERE event_id = $1`,
+        [eventId]
+      ),
+      query<GateRow>(
+        `SELECT * FROM gates WHERE event_id = $1`,
+        [eventId]
+      ),
+    ]);
+
+    const existingByCode = new Map(existingFacultiesRes.rows.map((faculty) => [faculty.code.toUpperCase(), faculty]));
+    const gatesByCode = new Map(gateRes.rows.map((gate) => [gate.code.toUpperCase(), gate]));
+    const seenCodes = new Set<string>();
+    const summary: BulkImportSummary = {
+      totalRows: rows.length,
+      created: 0,
+      updated: 0,
+      failed: 0,
+      errors: [],
+    };
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]!;
+      const rowNum = i + 2;
+      const parsed = facultyImportSchema.safeParse({
+        code: row.code,
+        name: row.name,
+        gate_code: row.gate_code,
+      });
+
+      if (!parsed.success) {
+        summary.failed++;
+        summary.errors.push({ row: rowNum, reason: parsed.error.issues[0]?.message ?? 'Invalid row' });
+        continue;
+      }
+
+      const code = parsed.data.code.toUpperCase();
+      if (seenCodes.has(code)) {
+        summary.failed++;
+        summary.errors.push({ row: rowNum, reason: `Duplicate school code in CSV: ${code}` });
+        continue;
+      }
+      seenCodes.add(code);
+
+      const gate = gatesByCode.get(parsed.data.gate_code.toUpperCase());
+      if (!gate) {
+        summary.failed++;
+        summary.errors.push({ row: rowNum, reason: `Unknown gate_code: ${parsed.data.gate_code}` });
+        continue;
+      }
+      if (gate.type === 'VEHICLE') {
+        summary.failed++;
+        summary.errors.push({ row: rowNum, reason: `School ${code} cannot be assigned to a vehicle gate` });
+        continue;
+      }
+
+      const existing = existingByCode.get(code);
+      if (existing) {
+        const updatedRes = await query<FacultyRow>(
+          `UPDATE faculties
+           SET name = $1,
+               gate_id = $2
+           WHERE id = $3
+           RETURNING *`,
+          [parsed.data.name, gate.id, existing.id]
+        );
+        existingByCode.set(code, updatedRes.rows[0]!);
+        summary.updated++;
+        continue;
+      }
+
+      const createdRes = await query<FacultyRow>(
+        `INSERT INTO faculties (event_id, name, code, gate_id)
+         VALUES ($1, $2, $3, $4)
+         RETURNING *`,
+        [eventId, parsed.data.name, code, gate.id]
+      );
+      existingByCode.set(code, createdRes.rows[0]!);
+      summary.created++;
+    }
+
+    await logAudit({
+      userId: req.admin!.sub,
+      eventId,
+      action: 'GATE_ASSIGNMENT_CHANGE',
+      targetId: eventId,
+      targetType: 'event',
+      details: {
+        entity: 'faculty_import',
+        totalRows: summary.totalRows,
+        created: summary.created,
+        updated: summary.updated,
+        failed: summary.failed,
+      },
+      ipAddress: req.ip,
+    });
+
+    res.status(201).json({ ok: true, data: summary });
+  } catch (err) {
     next(err);
   }
 }

@@ -4,7 +4,7 @@ import {
   getDashboard,
   listPendingVehiclePasses, approveVehiclePass, rejectVehiclePass,
   getAuditLogs,
-  createUser, listUsers, resetUserPassword,
+  createUser, listUsers, resetUserPassword, updateUserAssignment,
 } from './admin.controller';
 
 const router = Router();
@@ -23,5 +23,6 @@ router.post('/events/:eventId/vehicle-requests/:passId/reject',  rejectVehiclePa
 router.get('/users',                        listUsers);
 router.post('/users',                       createUser);
 router.patch('/users/:userId/password',     resetUserPassword);
+router.patch('/users/:userId/assignment',   updateUserAssignment);
 
 export default router;
