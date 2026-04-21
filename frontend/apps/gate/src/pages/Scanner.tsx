@@ -23,6 +23,7 @@ import {
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Capacitor } from '@capacitor/core';
+import { Haptics } from '@capacitor/haptics';
 import { tokens } from '@congregation/ui';
 import { db, lookupByHash, markCheckedIn, getUnsyncedLogs, markLogsAsSynced } from '../db/gate.db';
 import { requestApiJson } from '../config/api';
@@ -34,6 +35,37 @@ const AUTO_DISMISS_MS = 2_500;
 const SCAN_INTERVAL   = 120; // ~8 fps for web fallback
 
 function authHeader() { return { Authorization: `Bearer ${localStorage.getItem('gate_token')}` }; }
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function triggerVibration(duration: number) {
+  if (IS_NATIVE) {
+    await Haptics.vibrate({ duration });
+    return;
+  }
+
+  if ('vibrate' in navigator) {
+    navigator.vibrate(duration);
+  }
+}
+
+async function triggerHapticFeedback(result: ResultState['result']) {
+  if (result === 'VALID') {
+    await triggerVibration(200);
+    return;
+  }
+
+  if (result === 'WRONG_GATE') {
+    await triggerVibration(400);
+    return;
+  }
+
+  await triggerVibration(200);
+  await sleep(120);
+  await triggerVibration(200);
+}
 
 // ── Audio feedback helper ──────────────────────────────────────────────────────
 
@@ -280,46 +312,16 @@ export default function Scanner() {
     // Haptic feedback and sound based on result type
     if (state.result === 'VALID') {
       console.log('[Scanner] Playing VALID feedback');
-      // Single vibration for valid pass
-      try {
-        if ('vibrate' in navigator) {
-          navigator.vibrate(200);
-          console.log('[Scanner] Vibration triggered');
-        } else {
-          console.log('[Scanner] Vibration API not available');
-        }
-      } catch (e) {
-        console.error('[Scanner] Vibration error:', e);
-      }
+      void triggerHapticFeedback(state.result).catch((e) => console.error('[Scanner] Haptics error:', e));
       playSound('success');
     } else if (state.result === 'WRONG_GATE') {
       console.log('[Scanner] Playing WARNING feedback');
-      // Single longer vibration for wrong gate
-      try {
-        if ('vibrate' in navigator) {
-          navigator.vibrate(400);
-          console.log('[Scanner] Long vibration triggered');
-        } else {
-          console.log('[Scanner] Vibration API not available');
-        }
-      } catch (e) {
-        console.error('[Scanner] Vibration error:', e);
-      }
+      void triggerHapticFeedback(state.result).catch((e) => console.error('[Scanner] Haptics error:', e));
       playSound('warning');
     } else {
       // All error states: INVALID, ALREADY_USED, EXPIRED, REVOKED
       console.log('[Scanner] Playing ERROR feedback for:', state.result);
-      // Double vibration for rejected passes
-      try {
-        if ('vibrate' in navigator) {
-          navigator.vibrate([200, 100, 200]);
-          console.log('[Scanner] Double vibration triggered');
-        } else {
-          console.log('[Scanner] Vibration API not available');
-        }
-      } catch (e) {
-        console.error('[Scanner] Vibration error:', e);
-      }
+      void triggerHapticFeedback(state.result).catch((e) => console.error('[Scanner] Haptics error:', e));
       playSound('error');
     }
     
@@ -368,7 +370,7 @@ export default function Scanner() {
     try {
       const logs = await getUnsyncedLogs();
       if (logs.length === 0 && lastSync) return;
-      const data = await requestApiJson<{ data: { delta?: Array<{ pass_id?: string; result?: string }> } }>('POST', '/api/sync/checkins', {
+      const data = await requestApiJson<{ data: { received: number; delta?: Array<{ pass_id?: string; result?: string }>; serverTime: string } }>('POST', '/api/sync/checkins', {
         headers: authHeader(),
         data: {
           lastSyncAt: lastSync?.toISOString(),
@@ -380,7 +382,9 @@ export default function Scanner() {
       for (const d of data.data.delta ?? []) {
         if (d.pass_id && d.result === 'VALID') await markCheckedIn(d.pass_id);
       }
-      setLastSync(new Date());
+      // Use server time instead of local time to avoid clock skew issues
+      // This ensures the next sync request uses the correct timestamp for the "since" parameter
+      setLastSync(new Date(data.data.serverTime));
     } catch { /* non-fatal */ }
     finally { setSyncing(false); }
   }, [lastSync]);

@@ -83,5 +83,5 @@ export async function getUnsyncedLogs(): Promise<LocalScanLog[]> {
 }
 
 export async function markLogsAsSynced(ids: number[]): Promise<void> {
-  await db.scanLogs.where(':id').anyOf(ids).modify({ synced: true });
+  await db.scanLogs.where('id').anyOf(ids).modify({ synced: true });
 }
